@@ -1,0 +1,7 @@
+{
+  "name": "Build and Dockerize application using yarn",
+  "description": "Build application using yarn and create a docker container containing the built application",
+  "iconName": "yarn-build-dockerize",
+  "categories": ["nodejs"],
+  "filePatterns": ["yarn.lock"]
+}

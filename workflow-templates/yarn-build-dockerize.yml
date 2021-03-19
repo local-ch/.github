@@ -1,0 +1,134 @@
+name: Build (yarn) Dockerize Dev-Deploy
+
+on:
+  pull_request:
+    branches: [ $default_branch ]
+
+env:
+  APP_NAME: ${{github.event.repository.name}}
+  GEMFURY_TOKEN: ${{secrets.GEMFURY_TOKEN}}
+  GKE_CLUSTER: local-ch-stg
+  GKE_PROJECT: local-ch-stg-6f80bb1e
+  GKE_REGION: europe-west6
+  REGISTRY_HOST: eu.gcr.io/local-ch-registry-8e1b161f/nodejs
+
+jobs:
+  build-push:
+    runs-on: [ubuntu-latest]
+
+    steps:
+      - name: Checkout 🛎
+        uses: actions/checkout@v2
+
+      - name: Setup node env 🏗
+        uses: actions/setup-node@v2.1.5
+        with:
+          node-version: '14'
+          always-auth: true
+          registry-url: https://npm-proxy.fury.io/localsearch/
+          scope: '@localsearch'
+
+      - name: Get yarn cache directory path
+        id: yarn-cache-dir-path
+        run: echo "::set-output name=dir::$(yarn cache dir)"
+
+      - uses: actions/cache@v2
+        id: yarn-cache # use this to check for `cache-hit` (`steps.yarn-cache.outputs.cache-hit != 'true'`)
+        with:
+          path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
+
+      - name: Install dependencies 👨🏻‍💻
+        run: yarn
+        env:
+          NODE_AUTH_TOKEN: ${{secrets.BUNDLE_GEM__FURY__IO }}
+
+      - name: Build Application 🛠
+        run: yarn build
+
+      # Setup gcloud CLI
+      - uses: google-github-actions/setup-gcloud@master
+        with:
+          service_account_key: ${{secrets.GKE_KEY}}
+          export_default_credentials: true
+
+      #Configure docker to use the gcloud command-line tool as a credential helper
+      - run: |
+          # Set up docker to authenticate
+          # via gcloud command-line tool.
+          gcloud auth configure-docker
+
+      # Calculate Deployment Name
+      - name: Calculate Deployment Name
+        id: calculate_deployment
+        uses: local-ch/calculate-deployment-name@v1
+        with:
+          app: ${{github.event.repository.name}}
+          branch: ${{github.head_ref}}
+
+      # Build the Docker image
+      - name: Build docker image
+        run: docker build -t $REGISTRY_HOST/${{steps.calculate_deployment.outputs.name}}:${GITHUB_REF##*/} --build-arg GEMFURY_TOKEN=$BUNDLE_GEM__FURY__IO .
+
+      # Push the Docker image to Google Container Registry
+      - name: Publish
+        run: docker push $REGISTRY_HOST/${{steps.calculate_deployment.outputs.name}}:${GITHUB_REF##*/}
+
+  deploy:
+    needs: build-push
+    runs-on: [self-hosted, linux]
+
+    steps:
+      - name: Checkout 🛎
+        uses: actions/checkout@v2
+
+      # Setup ytt command-line tool
+      - name: Setup ytt command-line tool
+        run: wget https://github.com/k14s/ytt/releases/download/v0.28.0/ytt-linux-amd64 && install ytt-linux-amd64 ~/ytt
+
+      # Setup gcloud CLI
+      - uses: google-github-actions/setup-gcloud@master
+        with:
+          service_account_key: ${{secrets.GKE_KEY}}
+          export_default_credentials: true
+
+      # Install kubectl command line tool
+      - name: Install kubectl
+        run: gcloud components install kubectl
+
+      # Set gcloud/kubectl credentials
+      - name: Set kubectl credentials
+        run: gcloud container clusters get-credentials $GKE_CLUSTER --region $GKE_REGION --project $GKE_PROJECT
+
+      # Calculate Deployment Name
+      - name: Calculate Deployment Name
+        id: calculate_deployment
+        uses: local-ch/calculate-deployment-name@v1
+        with:
+          app: ${{github.event.repository.name}}
+          branch: ${{github.head_ref}}
+
+      # Deploy
+      - name: Deploy
+        run: |
+          ~/ytt -f deploy/ \
+          --data-value app_name=${{steps.calculate_deployment.outputs.name}} \
+          --data-value stage=stg \
+          --data-value tag=${GITHUB_REF##*/} \
+          --data-value domain=local-stg.cloud \
+          --data-value registry_host=$REGISTRY_HOST \
+          --data-value secrets_name=${{github.event.repository.name}} \
+          | kubectl apply -f-
+
+      - name: Rollout restart for staging
+        run: kubectl rollout restart deployment stg-${{steps.calculate_deployment.outputs.name}} -n nodejs
+
+      - name: Comment Deployment URL
+        uses: jungwinter/comment@v1
+        with:
+          type: create
+          issue_number: ${{ github.event.number }}
+          body: "🚀 Deployed here: https://${{ steps.calculate_deployment.outputs.name }}.local-stg.cloud/"
+          token: ${{ secrets.GITHUB_TOKEN }}
