@@ -70,11 +70,11 @@ jobs:
 
       # Build the Docker image
       - name: Build docker image
-        run: docker build -t $REGISTRY_HOST/${{steps.calculate_deployment.outputs.name}}:${GITHUB_REF##*/} --build-arg GEMFURY_TOKEN=$BUNDLE_GEM__FURY__IO .
+        run: docker build -t $REGISTRY_HOST/${{steps.calculate_deployment.outputs.name}}:${{ github.head_ref }} --build-arg GEMFURY_TOKEN=$BUNDLE_GEM__FURY__IO .
 
       # Push the Docker image to Google Container Registry
       - name: Publish
-        run: docker push $REGISTRY_HOST/${{steps.calculate_deployment.outputs.name}}:${GITHUB_REF##*/}
+        run: docker push $REGISTRY_HOST/${{steps.calculate_deployment.outputs.name}}:${{ github.head_ref }}
 
   deploy:
     needs: build-push
@@ -116,7 +116,7 @@ jobs:
           ~/ytt -f deploy/ \
           --data-value app_name=${{steps.calculate_deployment.outputs.name}} \
           --data-value stage=stg \
-          --data-value tag=${GITHUB_REF##*/} \
+          --data-value tag=${{ github.head_ref }} \
           --data-value domain=local-stg.cloud \
           --data-value registry_host=$REGISTRY_HOST \
           --data-value secrets_name=${{github.event.repository.name}} \
