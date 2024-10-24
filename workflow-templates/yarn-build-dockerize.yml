@@ -10,7 +10,7 @@ env:
   GKE_CLUSTER: local-ch-stg
   GKE_PROJECT: local-ch-stg-6f80bb1e
   GKE_REGION: europe-west6
-  REGISTRY_HOST: eu.gcr.io/local-ch-registry-8e1b161f/nodejs
+  REGISTRY_HOST: europe-west6-docker.pkg.dev/local-ch-registry-8e1b161f/nodejs
 
 jobs:
   build-push:
@@ -58,7 +58,7 @@ jobs:
       - run: |
           # Set up docker to authenticate
           # via gcloud command-line tool.
-          gcloud auth configure-docker
+          gcloud auth configure-docker ${{ vars.ARTIFACT_REGISTRY }}
 
       # Calculate Deployment Name
       - name: Calculate Deployment Name
